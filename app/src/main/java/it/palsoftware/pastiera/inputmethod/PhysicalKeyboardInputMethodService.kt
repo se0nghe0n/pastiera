@@ -236,6 +236,9 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     
     private val isNumericField: Boolean
         get() = inputContextState.isNumericField
+
+    private val isPasswordField: Boolean
+        get() = inputContextState.isPasswordField
     
     private val shouldDisableSmartFeatures: Boolean
         get() = inputContextState.shouldDisableSmartFeatures
@@ -1522,6 +1525,11 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         return HangulComposer.isActiveForLayout(activeKeyboardLayoutName)
     }
 
+    private fun isForceAsciiField(): Boolean {
+        val info = currentInputEditorInfo ?: return false
+        return (info.imeOptions and EditorInfo.IME_FLAG_FORCE_ASCII) != 0
+    }
+
     /**
      * Composes one physical key into the current Hangul syllable.
      * Returns false when the key should continue through the normal route
@@ -1533,7 +1541,16 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         inputConnection: InputConnection?
     ): Boolean {
         if (!isKoreanDubeolsikActive()) return false
-        if (isNumericField) return false
+        // Latin/ASCII-only fields: password, email, URI, numeric/phone, FORCE_ASCII.
+        // FILTER (search) stays Hangul-capable.
+        if (isNumericField ||
+            isPasswordField ||
+            inputContextState.isEmailField ||
+            inputContextState.isUriField ||
+            isForceAsciiField()
+        ) {
+            return false
+        }
         val ic = inputConnection ?: return false
         if (event == null) return false
         if (::symLayoutController.isInitialized && symLayoutController.isSymActive()) {

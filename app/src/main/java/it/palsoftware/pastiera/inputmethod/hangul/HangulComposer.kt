@@ -122,6 +122,17 @@ internal class HangulComposer {
             jongCombined = true
             return composingOnly()
         }
+        // Shift (or layout uppercase) may deliver ㄲ/ㅆ directly while jong is already
+        // the simple consonant. Treat that as the doubled batchim.
+        val simpleCho = JONG_TO_CHO[jong]
+        if (simpleCho != null && CHO_DOUBLES[simpleCho] == incoming) {
+            val doubledJong = CHO_TO_JONG[incoming] ?: -1
+            if (doubledJong >= 0) {
+                jong = doubledJong
+                jongCombined = true
+                return composingOnly()
+            }
+        }
         return commitAndStartConsonant(incoming)
     }
 

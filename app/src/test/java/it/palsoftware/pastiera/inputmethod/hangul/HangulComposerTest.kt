@@ -190,6 +190,26 @@ class HangulComposerTest {
     }
 
     @Test
+    fun `simple batchim doubles with plain and shift jamo`() {
+        assertEquals("갔", type("ㄱㅏㅅㅅ"))
+        assertEquals("갂", type("ㄱㅏㄱㄱ")) // 가 + ㄱ + ㄱ
+        assertEquals("깍", type("ㄲㅏㄱ")) // ㄲ + ㅏ + ㄱ
+        assertEquals("깎", type("ㄲㅏㄱㄱ")) // ㄲ + ㅏ + ㄱ + ㄱ → ㄲㅏㄲ
+        val shiftDouble = HangulComposer()
+        shiftDouble.process('ㄱ')
+        shiftDouble.process('ㅏ')
+        shiftDouble.process('ㄱ')
+        val result = shiftDouble.process('ㄲ') // Shift delivers ㄲ while jong is ㄱ
+        assertEquals("", result.commit)
+        assertEquals("갂", result.composing)
+        assertTrue(result.consumed)
+        val shiftFromEmptyJong = HangulComposer()
+        shiftFromEmptyJong.process('ㄱ')
+        shiftFromEmptyJong.process('ㅏ')
+        assertEquals("갂", shiftFromEmptyJong.process('ㄲ').composing) // 가 + Shiftㄱ
+    }
+
+    @Test
     fun `layout activation is tied to korean dubeolsik id`() {
         assertEquals("korean_dubeolsik_qwerty", HangulComposer.KOREAN_DUBEOLSIK_LAYOUT_ID)
         assertTrue(HangulComposer.isActiveForLayout("korean_dubeolsik_qwerty"))
