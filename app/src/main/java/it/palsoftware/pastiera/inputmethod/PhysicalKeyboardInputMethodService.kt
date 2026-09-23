@@ -61,6 +61,7 @@ import it.palsoftware.pastiera.inputmethod.aospkeyboard.SoftwareKeyboardLayoutTe
 import it.palsoftware.pastiera.inputmethod.aospkeyboard.SoftwareKeyboardSymLabels
 import it.palsoftware.pastiera.inputmethod.subtype.AdditionalSubtypeUtils.localeString
 import it.palsoftware.pastiera.inputmethod.subtype.AdditionalSubtypeUtils.setAdditionalInputMethodSubtypesCompat
+import it.palsoftware.pastiera.inputmethod.hangul.HangulComposer
 import it.palsoftware.pastiera.inputmethod.telex.VietnameseTelexProcessor
 import it.palsoftware.pastiera.inputmethod.trackpad.TrackpadEventDeviceResolver
 import it.palsoftware.pastiera.inputmethod.trackpad.TrackpadGestureDetector
@@ -311,6 +312,8 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         handler = multiTapHandler,
         timeoutMs = MULTI_TAP_TIMEOUT_MS
     )
+    private val hangulComposer = HangulComposer()
+    private var hangulSelectionSkips: Int = 0
     private val bounceKeyFilter = BounceKeyFilter()
     private val clicksPowerShiftTapFilter = ClicksPowerShiftTapFilter()
     private val accidentalKeyPressFilter = AccidentalKeyPressFilter()
@@ -1340,6 +1343,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
 
     private fun requestAutoCapShiftOneShot(): Boolean {
+        if (isKoreanDubeolsikActive()) return false
         if (isAutoCapSuppressedAtCursor()) return false
         return modifierStateController.requestShiftOneShotFromAutoCap()
     }
@@ -1455,6 +1459,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
 
     private fun switchToLayout(layoutName: String, showToast: Boolean) {
+        finishHangulComposition()
         activeKeyboardLayoutName = layoutName
         LayoutMappingRepository.loadLayout(assets, layoutName, this)
         variationStateController = VariationStateController(
@@ -1511,6 +1516,111 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             updateStatusBarText()
         }, CURSOR_UPDATE_DELAY)
         return true
+    }
+
+    private fun isKoreanDubeolsikActive(): Boolean {
+        return HangulComposer.isActiveForLayout(activeKeyboardLayoutName)
+    }
+
+    /**
+     * Composes one physical key into the current Hangul syllable.
+     * Returns false when the key should continue through the normal route
+     * (space, enter, punctuation, or an empty backspace).
+     */
+    private fun handleKoreanDubeolsikKey(
+        keyCode: Int,
+        event: KeyEvent?,
+        inputConnection: InputConnection?
+    ): Boolean {
+        if (!isKoreanDubeolsikActive()) return false
+        if (isNumericField) return false
+        val ic = inputConnection ?: return false
+        if (event == null) return false
+        if (::symLayoutController.isInitialized && symLayoutController.isSymActive()) {
+            finishHangulComposition()
+            return false
+        }
+        if (!ic.getSelectedText(0).isNullOrEmpty()) {
+            finishHangulComposition()
+            return false
+        }
+
+        if (keyCode == KeyEvent.KEYCODE_DEL) {
+            val result = hangulComposer.process(null)
+            if (!result.consumed) return false
+            applyHangulResult(ic, result)
+            return true
+        }
+
+        if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER) {
+            finishHangulComposition()
+            return false
+        }
+
+        if (!LayoutMappingRepository.isMapped(keyCode)) {
+            finishHangulComposition()
+            return false
+        }
+
+        val shifted = event.isShiftPressed || shiftPressed || shiftLayerLatched || shiftOneShot
+        val text = LayoutMappingRepository.getCharacterStringWithModifiers(
+            keyCode = keyCode,
+            isShiftPressed = shifted,
+            capsLockEnabled = false,
+            shiftOneShot = false
+        )
+        if (text.length != 1) {
+            finishHangulComposition()
+            return false
+        }
+
+        val result = hangulComposer.process(text[0])
+        if (!result.consumed) {
+            if (result.commit.isNotEmpty()) {
+                noteHangulEdit()
+                ic.commitText(result.commit, 1)
+            }
+            return false
+        }
+
+        applyHangulResult(ic, result)
+        if (shiftOneShot) {
+            modifierStateController.consumeShiftOneShot()
+        }
+        Handler(Looper.getMainLooper()).postDelayed({
+            updateStatusBarText()
+        }, CURSOR_UPDATE_DELAY)
+        return true
+    }
+
+    private fun applyHangulResult(ic: InputConnection, result: HangulComposer.Result) {
+        noteHangulEdit()
+        ic.beginBatchEdit()
+        try {
+            if (result.commit.isNotEmpty()) {
+                ic.commitText(result.commit, 1)
+            }
+            if (result.composing.isNotEmpty()) {
+                ic.setComposingText(result.composing, 1)
+            } else if (result.commit.isEmpty()) {
+                ic.setComposingText("", 1)
+                ic.finishComposingText()
+            }
+        } finally {
+            ic.endBatchEdit()
+        }
+    }
+
+    private fun finishHangulComposition() {
+        if (!hangulComposer.hasComposition()) return
+        hangulComposer.reset()
+        noteHangulEdit()
+        currentInputConnection?.finishComposingText()
+    }
+
+    private fun noteHangulEdit() {
+        hangulSelectionSkips = 1
+        markSelectionUpdateSkipAfterCommit()
     }
 
     /**
@@ -3347,6 +3457,9 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
 
     override fun onStartInput(info: EditorInfo?, restarting: Boolean) {
+        if (!restarting) {
+            finishHangulComposition()
+        }
         pendingKeyboardSurfaceTransition?.let(uiHandler::removeCallbacks)
         pendingKeyboardSurfaceTransition = null
         super.onStartInput(info, restarting)
@@ -3516,6 +3629,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
 
     override fun onFinishInput() {
+        finishHangulComposition()
         pendingKeyboardSurfaceTransition?.let(uiHandler::removeCallbacks)
         pendingKeyboardSurfaceTransition = null
         super.onFinishInput()
@@ -4103,6 +4217,14 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         val forwardByOne = oldSelStart == oldSelEnd &&
             newSelEnd == newSelStart &&
             newSelStart == oldSelStart + 1
+        if (hangulSelectionSkips > 0) {
+            hangulSelectionSkips--
+        } else if (
+            hangulComposer.hasComposition() &&
+            (!collapsedSelection || (cursorPositionChanged && !forwardByOne))
+        ) {
+            hangulComposer.reset()
+        }
         val shouldSkipForCommit = skipNextSelectionUpdateAfterCommit && collapsedSelection && forwardByOne
         // Clear the flag so subsequent cursor moves are always processed.
         if (skipNextSelectionUpdateAfterCommit) {
@@ -4849,6 +4971,10 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             updateStatusBarText()
         }
 
+        if (keyCode == KeyEvent.KEYCODE_ENTER && isKoreanDubeolsikActive()) {
+            finishHangulComposition()
+        }
+
         if (handleEnterAsEditorAction(
                 keyCode,
                 info,
@@ -4900,7 +5026,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
                             context = this,
                             inputConnection = ic,
                             shouldDisableAutoCapitalize = shouldDisableAutoCapitalize,
-                            onEnableShift = { modifierStateController.requestShiftOneShotFromAutoCap() },
+                            onEnableShift = { requestAutoCapShiftOneShot() },
                             disableShift = { modifierStateController.consumeShiftOneShot() },
                             onUpdateStatusBar = { updateStatusBarText() }
                         )
@@ -4918,6 +5044,14 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             )
         ) {
             return true
+        }
+        if (!altActiveNow && !ctrlActiveNow && isKoreanDubeolsikActive()) {
+            if (keyCode == KeyEvent.KEYCODE_DEL && handleKoreanDubeolsikKey(keyCode, event, ic)) {
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER) {
+                finishHangulComposition()
+            }
         }
         if (!altActiveNow) {
             if (
@@ -4940,6 +5074,10 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             ) {
                 return true
             }
+        }
+
+        if (!altActiveNow && !ctrlActiveNow && handleKoreanDubeolsikKey(keyCode, event, ic)) {
+            return true
         }
 
         if (!altActiveNow && !ctrlActiveNow && handleVietnameseTelexKey(keyCode, event, ic)) {
