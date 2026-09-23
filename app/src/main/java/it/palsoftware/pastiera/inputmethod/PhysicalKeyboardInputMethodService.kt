@@ -1598,12 +1598,16 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         ic.beginBatchEdit()
         try {
             if (result.commit.isNotEmpty()) {
+                // commitText replaces the active composing span (needed for 연음).
                 ic.commitText(result.commit, 1)
             }
             if (result.composing.isNotEmpty()) {
                 ic.setComposingText(result.composing, 1)
             } else if (result.commit.isEmpty()) {
                 ic.setComposingText("", 1)
+                ic.finishComposingText()
+            } else {
+                // Flush-only: commit replaced composing; ensure no leftover span.
                 ic.finishComposingText()
             }
         } finally {
@@ -1613,9 +1617,14 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
 
     private fun finishHangulComposition() {
         if (!hangulComposer.hasComposition()) return
-        hangulComposer.reset()
-        noteHangulEdit()
-        currentInputConnection?.finishComposingText()
+        val ic = currentInputConnection ?: run {
+            hangulComposer.reset()
+            return
+        }
+        // Commit the in-progress syllable explicitly. Relying on finishComposingText()
+        // alone drops the composing region when the next key (e.g. period) replaces it.
+        val result = hangulComposer.flush()
+        applyHangulResult(ic, result)
     }
 
     private fun noteHangulEdit() {
