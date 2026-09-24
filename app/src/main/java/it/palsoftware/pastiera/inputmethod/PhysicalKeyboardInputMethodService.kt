@@ -409,7 +409,13 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         get() = if (::symLayoutController.isInitialized) symLayoutController.currentSymPage() else 0
 
     private fun updateInputContextState(info: EditorInfo?) {
+        val previousAsciiOnly = isAsciiOnlyInputField()
         inputContextState = InputContextState.fromEditorInfo(info)
+        val asciiOnly = isAsciiOnlyInputField()
+        if (asciiOnly && !previousAsciiOnly) {
+            finishHangulComposition()
+        }
+        applyEffectiveLayoutMapping()
     }
 
     private fun markSelectionUpdateSkipAfterCommit() {
@@ -1464,7 +1470,8 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     private fun switchToLayout(layoutName: String, showToast: Boolean) {
         finishHangulComposition()
         activeKeyboardLayoutName = layoutName
-        LayoutMappingRepository.loadLayout(assets, layoutName, this)
+        // Remember the user's layout, but ASCII-only fields must type Latin.
+        applyEffectiveLayoutMapping()
         variationStateController = VariationStateController(
             VariationRepository.loadVariations(assets, this, activeKeyboardLayoutName)
         )
@@ -1530,6 +1537,23 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         return (info.imeOptions and EditorInfo.IME_FLAG_FORCE_ASCII) != 0
     }
 
+    private fun isAsciiOnlyInputField(): Boolean {
+        return isNumericField ||
+            isPasswordField ||
+            inputContextState.isEmailField ||
+            inputContextState.isUriField ||
+            isForceAsciiField()
+    }
+
+    /**
+     * Loads QWERTY mappings for ASCII-only fields without changing
+     * [activeKeyboardLayoutName], so Hangul resumes after leaving the field.
+     */
+    private fun applyEffectiveLayoutMapping() {
+        val layoutName = if (isAsciiOnlyInputField()) "qwerty" else activeKeyboardLayoutName
+        LayoutMappingRepository.loadLayout(assets, layoutName, this)
+    }
+
     /**
      * Composes one physical key into the current Hangul syllable.
      * Returns false when the key should continue through the normal route
@@ -1541,16 +1565,8 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         inputConnection: InputConnection?
     ): Boolean {
         if (!isKoreanDubeolsikActive()) return false
-        // Latin/ASCII-only fields: password, email, URI, numeric/phone, FORCE_ASCII.
-        // FILTER (search) stays Hangul-capable.
-        if (isNumericField ||
-            isPasswordField ||
-            inputContextState.isEmailField ||
-            inputContextState.isUriField ||
-            isForceAsciiField()
-        ) {
-            return false
-        }
+        // ASCII-only fields use QWERTY mappings; do not compose Hangul there.
+        if (isAsciiOnlyInputField()) return false
         val ic = inputConnection ?: return false
         if (event == null) return false
         if (::symLayoutController.isInitialized && symLayoutController.isSymActive()) {
