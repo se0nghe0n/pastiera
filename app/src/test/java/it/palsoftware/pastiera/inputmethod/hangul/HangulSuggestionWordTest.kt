@@ -11,6 +11,21 @@ class HangulSuggestionWordTest {
     }
 
     @Test
+    fun `composing syllable already in the editor is not repeated`() {
+        assertEquals("한국", HangulSuggestionWord.compose("한국", "국"))
+    }
+
+    @Test
+    fun `repeated syllable already in the editor is not collapsed`() {
+        assertEquals("가가", HangulSuggestionWord.compose("가가", "가"))
+    }
+
+    @Test
+    fun `bare choseong already in the editor is left off the word`() {
+        assertEquals("한", HangulSuggestionWord.compose("한ㄱ", "ㄱ"))
+    }
+
+    @Test
     fun `bare choseong does not break the syllable prefix`() {
         assertEquals("안녕", HangulSuggestionWord.compose("안녕", "ㅎ"))
     }

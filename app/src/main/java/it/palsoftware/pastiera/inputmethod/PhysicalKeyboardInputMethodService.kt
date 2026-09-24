@@ -1737,8 +1737,8 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
 
     /**
-     * Feed the current eojeol, including the composing syllable, into the
-     * existing suggestion tracker. getTextBeforeCursor omits the composing span.
+     * Feed the current eojeol, including one copy of the composing syllable,
+     * into the existing suggestion tracker.
      */
     private fun publishHangulSuggestions(ic: InputConnection, justCommitted: String) {
         if (!::suggestionController.isInitialized) return

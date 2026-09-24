@@ -6,10 +6,12 @@ import it.palsoftware.pastiera.core.Punctuation
  * Current-word string used for Korean suggestions.
  *
  * Committed text before the cursor is the word so far. A composing Hangul
- * syllable is appended because editors omit the composing span from
- * [android.view.inputmethod.InputConnection.getTextBeforeCursor]. A bare
- * choseong or jungseong (compatibility jamo) is left off: "한" + "ㄱ" is not
- * a prefix of "한국".
+ * syllable has to be part of that word, but editors disagree about whether
+ * [android.view.inputmethod.InputConnection.getTextBeforeCursor] already
+ * includes the composing span. Standard editors include it, so appending
+ * again turns "한국" into "한국국". Editors that omit the span still need
+ * the syllable appended. A bare choseong or jungseong is left off either
+ * way: "한" + "ㄱ" is not a prefix of "한국".
  */
 internal object HangulSuggestionWord {
     fun compose(
@@ -18,6 +20,11 @@ internal object HangulSuggestionWord {
         justCommitted: String = ""
     ): String {
         var committed = wordTail(textBeforeCursor)
+        // Take the composing span out when the editor already returned it,
+        // then add a finished syllable back once below.
+        if (composing.isNotEmpty() && committed.endsWith(composing)) {
+            committed = committed.dropLast(composing.length)
+        }
         // Remote editors can lag behind finishComposingText, so the syllable
         // just committed may still be missing from text before the cursor.
         if (justCommitted.isNotEmpty() &&
