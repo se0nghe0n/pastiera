@@ -50,6 +50,9 @@ internal class HangulComposer {
 
     fun hasComposition(): Boolean = cho >= 0 || jung >= 0
 
+    /** Syllable or compatibility jamo currently shown in the composing span. */
+    fun composingText(): String = currentText()
+
     private fun passThrough(): Result {
         if (!hasComposition()) return Result(consumed = false)
         val text = currentText()

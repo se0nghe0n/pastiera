@@ -292,6 +292,26 @@ class SuggestionController(
         tracker.onCharacterCommitted(normalizedText)
     }
 
+    /**
+     * Replace the tracked word with the Hangul word currently being typed,
+     * including a composing syllable the editor has not committed yet.
+     */
+    fun setComposingWord(word: String) {
+        if (!isEnabled()) return
+        cursorRunnable?.let { cursorHandler.removeCallbacks(it) }
+        cursorRunnable = null
+        if (word.isEmpty()) {
+            if (tracker.currentWord.isNotEmpty()) {
+                tracker.reset()
+            }
+            return
+        }
+        if (tracker.currentWord == word) return
+        ensureDictionaryLoaded()
+        autoReplaceController.clearLastReplacement()
+        tracker.setWord(word)
+    }
+
     fun refreshFromInputConnection(inputConnection: InputConnection?) {
         if (!isEnabled()) return
         tracker.onBackspace()

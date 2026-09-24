@@ -18,6 +18,13 @@ import it.palsoftware.pastiera.core.Punctuation
 object SuggestionButtonHandler {
     private const val TAG = "SuggestionButtonHandler"
 
+    /**
+     * Clears in-progress composition before the composing span is committed
+     * and replaced. Set by the IME so Hangul state does not flush the old
+     * syllable back after a suggestion is accepted.
+     */
+    var onBeforeReplace: (() -> Unit)? = null
+
     fun createSuggestionClickListener(
         suggestion: String,
         inputConnection: InputConnection?,
@@ -73,6 +80,11 @@ object SuggestionButtonHandler {
             val afterKeyEvent = inputConnection.getTextBeforeCursor(2, 0)?.toString().orEmpty()
             return afterKeyEvent.endsWith(" ")
         }
+
+        onBeforeReplace?.invoke()
+        // Composing text is not part of getTextBeforeCursor. Commit it first so
+        // the in-progress Hangul syllable is included in the replaced word.
+        inputConnection.finishComposingText()
 
         val before = inputConnection.getTextBeforeCursor(64, 0)?.toString().orEmpty()
         val after = inputConnection.getTextAfterCursor(64, 0)?.toString().orEmpty()

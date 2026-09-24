@@ -63,6 +63,8 @@ import it.palsoftware.pastiera.inputmethod.subtype.AdditionalSubtypeUtils.locale
 import it.palsoftware.pastiera.inputmethod.subtype.AdditionalSubtypeUtils.setAdditionalInputMethodSubtypesCompat
 import it.palsoftware.pastiera.inputmethod.hangul.HangulComposer
 import it.palsoftware.pastiera.inputmethod.hangul.HangulSelectionPolicy
+import it.palsoftware.pastiera.inputmethod.hangul.HangulSuggestionWord
+import it.palsoftware.pastiera.inputmethod.suggestions.SuggestionButtonHandler
 import it.palsoftware.pastiera.inputmethod.telex.VietnameseTelexProcessor
 import it.palsoftware.pastiera.inputmethod.trackpad.TrackpadEventDeviceResolver
 import it.palsoftware.pastiera.inputmethod.trackpad.TrackpadGestureDetector
@@ -1726,6 +1728,30 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         } finally {
             ic.endBatchEdit()
         }
+        publishHangulSuggestions(ic, result.commit)
+    }
+
+    private fun clearHangulComposerState() {
+        hangulComposer.reset()
+        hangulConsumedKeyCodes.clear()
+    }
+
+    /**
+     * Feed the current eojeol, including the composing syllable, into the
+     * existing suggestion tracker. getTextBeforeCursor omits the composing span.
+     */
+    private fun publishHangulSuggestions(ic: InputConnection, justCommitted: String) {
+        if (!::suggestionController.isInitialized) return
+        if (inputContextState.shouldDisableSuggestions) return
+        val before = try {
+            ic.getTextBeforeCursor(64, 0)?.toString().orEmpty()
+        } catch (_: Exception) {
+            return
+        }
+        val composing = if (hangulComposer.hasComposition()) hangulComposer.composingText() else ""
+        suggestionController.setComposingWord(
+            HangulSuggestionWord.compose(before, composing, justCommitted)
+        )
     }
 
     private fun finishHangulComposition() {
@@ -1940,6 +1966,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             activeSuggestionLocalesProvider = { getAdditionalSuggestionLocalesForActiveInputStyle() }
         )
         inputEventRouter.suggestionController = suggestionController
+        SuggestionButtonHandler.onBeforeReplace = { clearHangulComposerState() }
         
         // Preload dictionary in background so it's ready when user focuses a field
         suggestionController.preloadDictionary()
@@ -2992,6 +3019,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
     
     override fun onDestroy() {
+        SuggestionButtonHandler.onBeforeReplace = null
         ClicksAccessibilityKeyBridge.unregister(this)
         clicksPowerShiftTapFilter.reset()
         accidentalKeyPressFilter.reset()
@@ -4402,8 +4430,10 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             if (!forwardByOne) {
                 DeferredPunctuationSpaceTracker.clear()
             }
-            // Update suggestions on cursor movement (if suggestions enabled)
-            if (!state.shouldDisableSuggestions) {
+            // Update suggestions on cursor movement (if suggestions enabled).
+            // While a Hangul syllable is composing, the editor text omits that
+            // span; publishHangulSuggestions already set the logical word.
+            if (!state.shouldDisableSuggestions && !hangulComposer.hasComposition()) {
                 suggestionController.onCursorMoved(currentInputConnection)
             }
             // Drop add-word candidate if cursor leaves its word
@@ -6111,6 +6141,11 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             ) && SettingsManager.getAutoCapitalizeFirstLetter(this)
 
             Log.d(TAG, "Accepting suggestion '$suggestion' from third=$third (index=$suggestionIndex)")
+
+            // Drop Hangul state before the composing span is committed, then
+            // include that syllable in the word the suggestion replaces.
+            clearHangulComposerState()
+            ic.finishComposingText()
 
             // Use the same logic as SuggestionButtonHandler
             val before = ic.getTextBeforeCursor(64, 0)?.toString().orEmpty()
