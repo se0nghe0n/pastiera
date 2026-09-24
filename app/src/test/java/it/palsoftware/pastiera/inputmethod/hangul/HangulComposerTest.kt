@@ -263,6 +263,43 @@ class HangulComposerTest {
     }
 
     @Test
+    fun `있다 아님 버그다 syllable breaks use commit plus composing without punctuation`() {
+        // Device regression: spurious "." appeared between syllables (있.다 / 아.님 / 버그.다)
+        // at commitAndStartConsonant / 연음. Composer itself must only emit Hangul.
+        fun steps(sequence: String): List<HangulComposer.Result> {
+            val composer = HangulComposer()
+            return sequence.map { composer.process(it) }
+        }
+
+        val itda = steps("ㅇㅣㅆㄷㅏ")
+        assertEquals("", itda[2].commit) // 있 still composing after ㅆ
+        assertEquals("있", itda[2].composing)
+        assertEquals("있", itda[3].commit) // ㄷ commits 있 and starts ㄷ
+        assertEquals("ㄷ", itda[3].composing)
+        assertFalse(itda[3].commit.contains('.'))
+        assertFalse(itda[3].composing.contains('.'))
+        assertEquals("", itda[4].commit)
+        assertEquals("다", itda[4].composing)
+        assertEquals("있다", type("ㅇㅣㅆㄷㅏ"))
+
+        val anim = steps("ㅇㅏㄴㅣㅁ")
+        assertEquals("아", anim[3].commit) // 연음 안+ㅣ
+        assertEquals("니", anim[3].composing)
+        assertFalse(anim[3].commit.contains('.'))
+        assertEquals("아님", type("ㅇㅏㄴㅣㅁ"))
+
+        val beogeuda = steps("ㅂㅓㄱㅡㄷㅏ")
+        assertEquals("버", beogeuda[3].commit) // 연음 벅+ㅡ
+        assertEquals("그", beogeuda[3].composing)
+        assertEquals("", beogeuda[4].commit) // ㄷ attaches as batchim → 귿
+        assertEquals("귿", beogeuda[4].composing)
+        assertEquals("그", beogeuda[5].commit) // ㅏ splits 귿 → 그 + 다
+        assertEquals("다", beogeuda[5].composing)
+        assertFalse(beogeuda.any { '.' in it.commit || '.' in it.composing })
+        assertEquals("버그다", type("ㅂㅓㄱㅡㄷㅏ"))
+    }
+
+    @Test
     fun `layout activation is tied to korean dubeolsik id`() {
         assertEquals("korean_dubeolsik_qwerty", HangulComposer.KOREAN_DUBEOLSIK_LAYOUT_ID)
         assertTrue(HangulComposer.isActiveForLayout("korean_dubeolsik_qwerty"))

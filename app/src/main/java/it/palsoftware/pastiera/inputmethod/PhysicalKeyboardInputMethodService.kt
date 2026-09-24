@@ -318,6 +318,8 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     )
     private val hangulComposer = HangulComposer()
     private var hangulSelectionSkips: Int = 0
+    /** KeyCodes consumed by Hangul on KEY_DOWN; also consume matching KEY_UP. */
+    private val hangulConsumedKeyCodes = mutableSetOf<Int>()
     private val bounceKeyFilter = BounceKeyFilter()
     private val clicksPowerShiftTapFilter = ClicksPowerShiftTapFilter()
     private val accidentalKeyPressFilter = AccidentalKeyPressFilter()
@@ -1588,6 +1590,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             val result = hangulComposer.process(null)
             if (!result.consumed) return false
             applyHangulResult(ic, result)
+            hangulConsumedKeyCodes.add(keyCode)
             return true
         }
 
@@ -1625,6 +1628,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         }
 
         applyHangulResult(ic, result)
+        hangulConsumedKeyCodes.add(keyCode)
         if (shiftOneShot) {
             modifierStateController.consumeShiftOneShot()
         }
@@ -1635,13 +1639,21 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
 
     private fun applyHangulResult(ic: InputConnection, result: HangulComposer.Result) {
-        noteHangulEdit()
+        val isYeoneum = result.commit.isNotEmpty() && result.composing.isNotEmpty()
+        // 연음 issues finishComposingText + setComposingText → more selection callbacks.
+        noteHangulEdit(selectionSkips = if (isYeoneum) 3 else 2)
         ic.beginBatchEdit()
         try {
             when {
-                // 연음: commit the finished syllable, then keep composing the next one.
-                result.commit.isNotEmpty() && result.composing.isNotEmpty() -> {
-                    ic.commitText(result.commit, 1)
+                // 연음: finish the completed syllable, then start composing the next jamo.
+                // Use the same setComposingText+finishComposingText pattern as flush —
+                // commitText() is racy on some editors (same class of bug as the
+                // punctuation wipe): a secondary unicodeChar/KeyEvent path can still
+                // touch the old composing region and inject "." between syllables
+                // (device: 있.다 / 아.님 / 버그.다).
+                isYeoneum -> {
+                    ic.setComposingText(result.commit, 1)
+                    ic.finishComposingText()
                     ic.setComposingText(result.composing, 1)
                 }
                 // Still composing (no commit yet).
@@ -1667,9 +1679,13 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
 
     private fun finishHangulComposition() {
-        if (!hangulComposer.hasComposition()) return
+        if (!hangulComposer.hasComposition()) {
+            hangulConsumedKeyCodes.clear()
+            return
+        }
         val ic = currentInputConnection ?: run {
             hangulComposer.reset()
+            hangulConsumedKeyCodes.clear()
             return
         }
         // Commit the in-progress syllable explicitly. Relying on finishComposingText()
@@ -1678,10 +1694,11 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         applyHangulResult(ic, result)
     }
 
-    private fun noteHangulEdit() {
-        // Optional one-callback guard only. Finishing is decided by HangulSelectionPolicy
-        // (composing region / real cursor jumps), not by skip count.
-        hangulSelectionSkips = 1
+    private fun noteHangulEdit(selectionSkips: Int = 2) {
+        // Guard a short burst of setComposingText/finishComposingText callbacks.
+        // 연음 does finish+setComposing (2+ selection updates); HangulSelectionPolicy
+        // still decides real finishes (cursor outside composing / jumps).
+        hangulSelectionSkips = selectionSkips.coerceAtLeast(1)
         markSelectionUpdateSkipAfterCommit()
     }
 
@@ -3692,6 +3709,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
 
     override fun onFinishInput() {
         finishHangulComposition()
+        hangulConsumedKeyCodes.clear()
         pendingKeyboardSurfaceTransition?.let(uiHandler::removeCallbacks)
         pendingKeyboardSurfaceTransition = null
         super.onFinishInput()
@@ -5091,7 +5109,20 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
                 DeferredPunctuationSpaceTracker.clear()
             }
             !altActiveNow && !ctrlActiveNow && ic != null -> {
+                // Hangul letter keys will be handled by handleKoreanDubeolsikKey using
+                // layout jamo — do not run deferred-punct logic on hardware unicodeChar
+                // (often Latin) for those keys; it can leave punctuation-adjacent state
+                // that later interacts badly with syllable commits.
+                val hangulWillHandle = isKoreanDubeolsikActive() &&
+                    !isAsciiOnlyInputField() &&
+                    LayoutMappingRepository.isMapped(keyCode) &&
+                    keyCode != KeyEvent.KEYCODE_SPACE &&
+                    keyCode != KeyEvent.KEYCODE_ENTER &&
+                    keyCode != KeyEvent.KEYCODE_DEL &&
+                    !isPureModifierKey(keyCode) &&
+                    !KeyEvent.isModifierKey(keyCode)
                 val typedText = when {
+                    hangulWillHandle -> ""
                     keyCode == KeyEvent.KEYCODE_SPACE -> " "
                     event?.unicodeChar?.takeIf { it != 0 } != null -> event.unicodeChar.toChar().toString()
                     else -> ""
@@ -5358,6 +5389,13 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         
         // Continue with normal IME logic for text fields
         val inputConnection = currentInputConnection ?: return super.onKeyUp(keyCode, event)
+
+        // Hangul consumed KEY_DOWN: also consume KEY_UP so the editor cannot
+        // apply a secondary unicodeChar path (can inject "." between syllables).
+        if (hangulConsumedKeyCodes.remove(keyCode)) {
+            notifyDebugKeyEvent(keyCode, event, "KEY_UP", origin = "hangul_consumed")
+            return true
+        }
         
         // Always notify the tracker (even when the event is consumed)
         notifyDebugKeyEvent(keyCode, event, "KEY_UP", origin = "ime_service")
