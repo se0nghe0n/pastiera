@@ -1473,7 +1473,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     private fun switchToLayout(layoutName: String, showToast: Boolean) {
         finishHangulComposition()
         activeKeyboardLayoutName = layoutName
-        // Remember the user's layout, but ASCII-only fields must type Latin.
+        // Remember the user's layout; password/numeric/FORCE_ASCII still force QWERTY.
         applyEffectiveLayoutMapping()
         variationStateController = VariationStateController(
             VariationRepository.loadVariations(assets, this, activeKeyboardLayoutName)
@@ -1541,10 +1541,12 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
 
     private fun isAsciiOnlyInputField(): Boolean {
+        // Password / numeric / phone / IME_FLAG_FORCE_ASCII stay Latin-only.
+        // URI (Chrome omnibox) and email intentionally allow Hangul: modern Android
+        // browsers/search bars use TYPE_TEXT_VARIATION_URI for Korean queries, and
+        // email fields are not strictly ASCII-only either.
         return isNumericField ||
             isPasswordField ||
-            inputContextState.isEmailField ||
-            inputContextState.isUriField ||
             isForceAsciiField()
     }
 
@@ -1560,7 +1562,9 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     /**
      * Composes one physical key into the current Hangul syllable.
      * Returns false when the key should continue through the normal route
-     * (space, enter, punctuation, or an empty backspace).
+     * (space, enter, or an empty backspace). Printable punctuation/digits after
+     * an active composition are flushed + self-committed and return true so the
+     * editor KeyEvent path cannot wipe the syllable.
      */
     private fun handleKoreanDubeolsikKey(
         keyCode: Int,
@@ -1600,7 +1604,22 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         }
 
         if (!LayoutMappingRepository.isMapped(keyCode)) {
+            // Punctuation / digit / symbol keys are not in the Dubeolsik map.
+            // Flush Hangul, then insert the character ourselves and consume the
+            // KeyEvent. Returning false used to fall through to CallSuper; on some
+            // editors that KeyEvent still replaces the just-finished composing
+            // region and wipes the syllable (device: 가 → .).
+            val symbol = event.unicodeChar.takeIf { it != 0 }?.toChar()
+            val hadComposition = hangulComposer.hasComposition()
             finishHangulComposition()
+            if (hadComposition && symbol != null && !symbol.isISOControl()) {
+                commitHangulFollowOnSymbol(ic, symbol)
+                hangulConsumedKeyCodes.add(keyCode)
+                Handler(Looper.getMainLooper()).postDelayed({
+                    updateStatusBarText()
+                }, CURSOR_UPDATE_DELAY)
+                return true
+            }
             return false
         }
 
@@ -1618,13 +1637,20 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
 
         val result = hangulComposer.process(text[0])
         if (!result.consumed) {
-            // Non-jamo (or unmapped into composer): flush syllable via the same
-            // InputConnection path as finishHangulComposition, then let the normal
-            // key route insert the symbol/digit.
+            // Non-jamo from a mapped key: flush via InputConnection, then commit the
+            // symbol here and consume — do not let CallSuper deliver unicodeChar.
             if (result.commit.isNotEmpty() || result.composing.isNotEmpty()) {
                 applyHangulResult(ic, result)
             }
-            return false
+            commitHangulFollowOnSymbol(ic, text[0])
+            hangulConsumedKeyCodes.add(keyCode)
+            if (shiftOneShot) {
+                modifierStateController.consumeShiftOneShot()
+            }
+            Handler(Looper.getMainLooper()).postDelayed({
+                updateStatusBarText()
+            }, CURSOR_UPDATE_DELAY)
+            return true
         }
 
         applyHangulResult(ic, result)
@@ -1636,6 +1662,30 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             updateStatusBarText()
         }, CURSOR_UPDATE_DELAY)
         return true
+    }
+
+    /**
+     * After Hangul has been flushed, commit [symbol] via InputConnection and leave
+     * no composing span. Prefer this over letting KeyEvent/unicodeChar reach the
+     * editor — that path replaces an active (or just-finished) composing region.
+     */
+    private fun commitHangulFollowOnSymbol(ic: InputConnection, symbol: Char) {
+        noteHangulEdit(selectionSkips = 2)
+        ic.beginBatchEdit()
+        try {
+            ic.finishComposingText()
+            ic.commitText(symbol.toString(), 1)
+        } finally {
+            ic.endBatchEdit()
+        }
+        if (::suggestionController.isInitialized) {
+            val boundary = it.palsoftware.pastiera.core.Punctuation.normalizeApostrophe(symbol)
+            if (boundary in it.palsoftware.pastiera.core.Punctuation.BOUNDARY || symbol.isWhitespace()) {
+                suggestionController.onContextReset()
+            } else {
+                suggestionController.onCharacterCommitted(symbol.toString(), ic)
+            }
+        }
     }
 
     private fun applyHangulResult(ic: InputConnection, result: HangulComposer.Result) {
@@ -2657,6 +2707,11 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         snapshot: StatusBarController.StatusSnapshot
     ): Boolean {
         val ic = inputConnection ?: return false
+        // Soft keys commit via InputConnection.commitText, which replaces an
+        // active Hangul composing span — finish the syllable first.
+        if (isKoreanDubeolsikActive() && hangulComposer.hasComposition()) {
+            finishHangulComposition()
+        }
 
         if (text == " ") {
             if (::textExpansionController.isInitialized &&
@@ -2719,6 +2774,9 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         val boundary = it.palsoftware.pastiera.core.Punctuation.normalizeApostrophe(text[0])
         if (boundary == '\'' || boundary !in it.palsoftware.pastiera.core.Punctuation.BOUNDARY) {
             return false
+        }
+        if (isKoreanDubeolsikActive() && hangulComposer.hasComposition()) {
+            finishHangulComposition()
         }
         if (DeferredPunctuationSpaceTracker.prepareForTextCommit(this, ic, text)) {
             suggestionController.onContextReset()
@@ -4795,6 +4853,9 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             )
             if (!symChar.isNullOrEmpty()) {
                 val inputConnection = currentInputConnection
+                if (isKoreanDubeolsikActive() && hangulComposer.hasComposition()) {
+                    finishHangulComposition()
+                }
                 if (!handleBoundaryTextBeforeCommit(symChar, inputConnection)) {
                     inputConnection?.commitText(symChar, 1)
                 }
@@ -5155,6 +5216,16 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         ) {
             return true
         }
+        // Alt/SYM commitText paths skip handleKoreanDubeolsikKey; flush first so
+        // their symbol cannot replace an active Hangul composing span.
+        val symActiveNow = ::symLayoutController.isInitialized && symLayoutController.isSymActive()
+        if ((altActiveNow || symActiveNow) &&
+            isKoreanDubeolsikActive() &&
+            hangulComposer.hasComposition()
+        ) {
+            finishHangulComposition()
+        }
+
         // Hangul must run BEFORE the text-input pipeline. The pipeline commits
         // punctuation/space via unicodeChar (finishComposingText + commitText) and
         // would replace an active Hangul composing span with only "." / "," / etc.

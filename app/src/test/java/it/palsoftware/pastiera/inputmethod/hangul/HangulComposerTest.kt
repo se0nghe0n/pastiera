@@ -218,6 +218,8 @@ class HangulComposerTest {
 
     @Test
     fun `flush and non-jamo leave a committed syllable for IME punctuation path`() {
+        // IME must flush then self-commit the symbol (not CallSuper KeyEvent),
+        // otherwise some editors wipe the finished syllable.
         val composer = HangulComposer()
         composer.process('ㄱ')
         composer.process('ㅏ')
