@@ -62,6 +62,7 @@ import it.palsoftware.pastiera.inputmethod.aospkeyboard.SoftwareKeyboardSymLabel
 import it.palsoftware.pastiera.inputmethod.subtype.AdditionalSubtypeUtils.localeString
 import it.palsoftware.pastiera.inputmethod.subtype.AdditionalSubtypeUtils.setAdditionalInputMethodSubtypesCompat
 import it.palsoftware.pastiera.inputmethod.hangul.HangulComposer
+import it.palsoftware.pastiera.inputmethod.hangul.HangulSelectionPolicy
 import it.palsoftware.pastiera.inputmethod.telex.VietnameseTelexProcessor
 import it.palsoftware.pastiera.inputmethod.trackpad.TrackpadEventDeviceResolver
 import it.palsoftware.pastiera.inputmethod.trackpad.TrackpadGestureDetector
@@ -1577,6 +1578,11 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             finishHangulComposition()
             return false
         }
+        // Shift/Alt/Ctrl/Caps/Meta must NOT finish composition. Otherwise Shift-down
+        // before T commits 이 and ㅆ starts as a new choseong (device: 이ㅆ…).
+        if (isPureModifierKey(keyCode) || KeyEvent.isModifierKey(keyCode)) {
+            return false
+        }
 
         if (keyCode == KeyEvent.KEYCODE_DEL) {
             val result = hangulComposer.process(null)
@@ -1673,9 +1679,9 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
 
     private fun noteHangulEdit() {
-        // setComposingText / finishComposingText often emit more than one selection
-        // callback; keep composer state until those settle.
-        hangulSelectionSkips = 2
+        // Optional one-callback guard only. Finishing is decided by HangulSelectionPolicy
+        // (composing region / real cursor jumps), not by skip count.
+        hangulSelectionSkips = 1
         markSelectionUpdateSkipAfterCommit()
     }
 
@@ -4273,17 +4279,30 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         val forwardByOne = oldSelStart == oldSelEnd &&
             newSelEnd == newSelStart &&
             newSelStart == oldSelStart + 1
+        // Minor guard only: our own setComposingText can emit a burst of callbacks.
+        // Primary decision is HangulSelectionPolicy (composing-region aware).
         if (hangulSelectionSkips > 0) {
             hangulSelectionSkips--
-        } else if (
-            hangulComposer.hasComposition() &&
-            (!collapsedSelection || (cursorPositionChanged && !forwardByOne))
-        ) {
-            // Real cursor/selection move: commit the syllable. A silent reset() left
-            // the InputConnection composing span orphaned, so the next jamo's
-            // setComposingText replaced the whole syllable (broke 쌍받침).
-            // Post to avoid re-entrant InputConnection calls inside onUpdateSelection.
-            uiHandler.post { finishHangulComposition() }
+        } else {
+            val finishReason = HangulSelectionPolicy.finishReason(
+                hasComposition = hangulComposer.hasComposition(),
+                oldSelStart = oldSelStart,
+                oldSelEnd = oldSelEnd,
+                newSelStart = newSelStart,
+                newSelEnd = newSelEnd,
+                candidatesStart = candidatesStart,
+                candidatesEnd = candidatesEnd
+            )
+            if (finishReason != null) {
+                Log.d(
+                    TAG,
+                    "Hangul finish on selection: $finishReason " +
+                        "old=($oldSelStart,$oldSelEnd) new=($newSelStart,$newSelEnd) " +
+                        "candidates=($candidatesStart,$candidatesEnd)"
+                )
+                // Post to avoid re-entrant InputConnection calls inside onUpdateSelection.
+                uiHandler.post { finishHangulComposition() }
+            }
         }
         val shouldSkipForCommit = skipNextSelectionUpdateAfterCommit && collapsedSelection && forwardByOne
         // Clear the flag so subsequent cursor moves are always processed.

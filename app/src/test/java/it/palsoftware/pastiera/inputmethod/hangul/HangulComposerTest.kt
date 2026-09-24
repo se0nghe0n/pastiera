@@ -245,6 +245,24 @@ class HangulComposerTest {
     }
 
     @Test
+    fun `이 plus ㅆ attaches batchim as 있`() {
+        // Device regression: premature finish left 이ㅆ instead of 있.
+        assertEquals("있", type("ㅇㅣㅆ"))
+        val shift = HangulComposer()
+        shift.process('ㅇ')
+        shift.process('ㅣ')
+        val result = shift.process('ㅆ') // Shift+T in Dubeolsik
+        assertEquals("", result.commit)
+        assertEquals("있", result.composing)
+        assertTrue(result.consumed)
+        assertTrue(shift.hasComposition())
+        // Period must flush the full syllable, not leave bare ㅆ.
+        val flushed = shift.flush()
+        assertEquals("있", flushed.commit)
+        assertEquals("", flushed.composing)
+    }
+
+    @Test
     fun `layout activation is tied to korean dubeolsik id`() {
         assertEquals("korean_dubeolsik_qwerty", HangulComposer.KOREAN_DUBEOLSIK_LAYOUT_ID)
         assertTrue(HangulComposer.isActiveForLayout("korean_dubeolsik_qwerty"))
