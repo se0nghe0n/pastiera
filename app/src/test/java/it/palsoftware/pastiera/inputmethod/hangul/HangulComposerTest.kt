@@ -195,6 +195,8 @@ class HangulComposerTest {
         assertEquals("갂", type("ㄱㅏㄱㄱ")) // 가 + ㄱ + ㄱ
         assertEquals("깍", type("ㄲㅏㄱ")) // ㄲ + ㅏ + ㄱ
         assertEquals("깎", type("ㄲㅏㄱㄱ")) // ㄲ + ㅏ + ㄱ + ㄱ → ㄲㅏㄲ
+        assertEquals("깎", type("ㄲㅏㄲ")) // 까 + Shiftㄱ (ㄲ as atomic batchim)
+        assertEquals("샀", type("ㅅㅏㅆ")) // 사 + Shiftㅌ→ㅆ
         val shiftDouble = HangulComposer()
         shiftDouble.process('ㄱ')
         shiftDouble.process('ㅏ')
@@ -207,6 +209,39 @@ class HangulComposerTest {
         shiftFromEmptyJong.process('ㄱ')
         shiftFromEmptyJong.process('ㅏ')
         assertEquals("갂", shiftFromEmptyJong.process('ㄲ').composing) // 가 + Shiftㄱ
+        // Modern jamo (U+1100 block) must compose the same way as compatibility jamo.
+        val modern = HangulComposer()
+        modern.process('ᄀ') // U+1100
+        modern.process('ᅡ') // U+1161
+        assertEquals("갂", modern.process('ᄁ').composing) // U+1101
+    }
+
+    @Test
+    fun `flush and non-jamo leave a committed syllable for IME punctuation path`() {
+        val composer = HangulComposer()
+        composer.process('ㄱ')
+        composer.process('ㅏ')
+        assertTrue(composer.hasComposition())
+        val flushed = composer.flush()
+        assertEquals("가", flushed.commit)
+        assertEquals("", flushed.composing)
+        assertTrue(flushed.consumed)
+        assertFalse(composer.hasComposition())
+
+        val again = HangulComposer()
+        again.process('ㄱ')
+        again.process('ㅏ')
+        val punct = again.process('.')
+        assertEquals("가", punct.commit)
+        assertEquals("", punct.composing)
+        assertFalse(punct.consumed)
+        assertFalse(again.hasComposition())
+
+        val space = HangulComposer()
+        space.process('ㄲ')
+        space.process('ㅏ')
+        space.process('ㄲ')
+        assertEquals("깎", space.flush().commit)
     }
 
     @Test

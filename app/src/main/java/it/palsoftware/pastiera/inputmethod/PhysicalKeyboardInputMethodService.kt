@@ -1609,9 +1609,11 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
 
         val result = hangulComposer.process(text[0])
         if (!result.consumed) {
-            if (result.commit.isNotEmpty()) {
-                noteHangulEdit()
-                ic.commitText(result.commit, 1)
+            // Non-jamo (or unmapped into composer): flush syllable via the same
+            // InputConnection path as finishHangulComposition, then let the normal
+            // key route insert the symbol/digit.
+            if (result.commit.isNotEmpty() || result.composing.isNotEmpty()) {
+                applyHangulResult(ic, result)
             }
             return false
         }
@@ -1630,18 +1632,28 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         noteHangulEdit()
         ic.beginBatchEdit()
         try {
-            if (result.commit.isNotEmpty()) {
-                // commitText replaces the active composing span (needed for 연음).
-                ic.commitText(result.commit, 1)
-            }
-            if (result.composing.isNotEmpty()) {
-                ic.setComposingText(result.composing, 1)
-            } else if (result.commit.isEmpty()) {
-                ic.setComposingText("", 1)
-                ic.finishComposingText()
-            } else {
-                // Flush-only: commit replaced composing; ensure no leftover span.
-                ic.finishComposingText()
+            when {
+                // 연음: commit the finished syllable, then keep composing the next one.
+                result.commit.isNotEmpty() && result.composing.isNotEmpty() -> {
+                    ic.commitText(result.commit, 1)
+                    ic.setComposingText(result.composing, 1)
+                }
+                // Still composing (no commit yet).
+                result.composing.isNotEmpty() -> {
+                    ic.setComposingText(result.composing, 1)
+                }
+                // Flush / pass-through commit: put the syllable into the composing span
+                // then finish it. commitText()+finishComposingText() is racy on some
+                // editors — the following punctuation/digit KeyEvent can still replace
+                // the old composing region and wipe the Hangul syllable.
+                result.commit.isNotEmpty() -> {
+                    ic.setComposingText(result.commit, 1)
+                    ic.finishComposingText()
+                }
+                else -> {
+                    ic.setComposingText("", 1)
+                    ic.finishComposingText()
+                }
             }
         } finally {
             ic.endBatchEdit()
@@ -1661,7 +1673,9 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
 
     private fun noteHangulEdit() {
-        hangulSelectionSkips = 1
+        // setComposingText / finishComposingText often emit more than one selection
+        // callback; keep composer state until those settle.
+        hangulSelectionSkips = 2
         markSelectionUpdateSkipAfterCommit()
     }
 
@@ -4265,7 +4279,11 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             hangulComposer.hasComposition() &&
             (!collapsedSelection || (cursorPositionChanged && !forwardByOne))
         ) {
-            hangulComposer.reset()
+            // Real cursor/selection move: commit the syllable. A silent reset() left
+            // the InputConnection composing span orphaned, so the next jamo's
+            // setComposingText replaced the whole syllable (broke 쌍받침).
+            // Post to avoid re-entrant InputConnection calls inside onUpdateSelection.
+            uiHandler.post { finishHangulComposition() }
         }
         val shouldSkipForCommit = skipNextSelectionUpdateAfterCommit && collapsedSelection && forwardByOne
         // Clear the flag so subsequent cursor moves are always processed.
@@ -5087,14 +5105,13 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         ) {
             return true
         }
-        if (!altActiveNow && !ctrlActiveNow && isKoreanDubeolsikActive()) {
-            if (keyCode == KeyEvent.KEYCODE_DEL && handleKoreanDubeolsikKey(keyCode, event, ic)) {
-                return true
-            }
-            if (keyCode == KeyEvent.KEYCODE_SPACE || keyCode == KeyEvent.KEYCODE_ENTER) {
-                finishHangulComposition()
-            }
+        // Hangul must run BEFORE the text-input pipeline. The pipeline commits
+        // punctuation/space via unicodeChar (finishComposingText + commitText) and
+        // would replace an active Hangul composing span with only "." / "," / etc.
+        if (!altActiveNow && !ctrlActiveNow && handleKoreanDubeolsikKey(keyCode, event, ic)) {
+            return true
         }
+
         if (!altActiveNow) {
             if (
                 inputEventRouter.handleTextInputPipeline(
@@ -5116,10 +5133,6 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             ) {
                 return true
             }
-        }
-
-        if (!altActiveNow && !ctrlActiveNow && handleKoreanDubeolsikKey(keyCode, event, ic)) {
-            return true
         }
 
         if (!altActiveNow && !ctrlActiveNow && handleVietnameseTelexKey(keyCode, event, ic)) {

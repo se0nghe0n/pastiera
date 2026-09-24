@@ -257,6 +257,7 @@ internal class HangulComposer {
         )
         private val JONG_COMBINE = mapOf(
             (1 to 0) to 2,   // ㄱ + ㄱ = ㄲ
+            (1 to 1) to 2,   // ㄱ + ㄲ (Shift) = ㄲ
             (1 to 9) to 3,   // ㄱ + ㅅ = ㄳ
             (4 to 12) to 5,  // ㄴ + ㅈ = ㄵ
             (4 to 18) to 6,  // ㄴ + ㅎ = ㄶ
@@ -268,7 +269,8 @@ internal class HangulComposer {
             (8 to 17) to 14, // ㄹ + ㅍ = ㄿ
             (8 to 18) to 15, // ㄹ + ㅎ = ㅀ
             (17 to 9) to 18, // ㅂ + ㅅ = ㅄ
-            (19 to 9) to 20  // ㅅ + ㅅ = ㅆ
+            (19 to 9) to 20, // ㅅ + ㅅ = ㅆ
+            (19 to 10) to 20 // ㅅ + ㅆ (Shift) = ㅆ
         )
         private val JONG_DECOMPOSE = mapOf(
             2 to 1, 3 to 1, 5 to 4, 6 to 4,
@@ -292,10 +294,27 @@ internal class HangulComposer {
         private val consonantIndexes: Map<Char, Int> = CHOSEONG.withIndex().associate { it.value to it.index }
         private val vowelIndexes: Map<Char, Int> = JUNGSEONG.withIndex().associate { it.value to it.index }
 
+        // Some keyboards/IME bridges emit modern jamo (U+1100 / U+1161) instead of
+        // compatibility jamo (U+3131 / U+314F). Accept both so Shift-ㄲ still composes.
+        private val modernChoseong = charArrayOf(
+            'ᄀ', 'ᄁ', 'ᄂ', 'ᄃ', 'ᄄ', 'ᄅ', 'ᄆ', 'ᄇ', 'ᄈ', 'ᄉ',
+            'ᄊ', 'ᄋ', 'ᄌ', 'ᄍ', 'ᄎ', 'ᄏ', 'ᄐ', 'ᄑ', 'ᄒ'
+        )
+        private val modernJungseong = charArrayOf(
+            'ᅡ', 'ᅢ', 'ᅣ', 'ᅤ', 'ᅥ', 'ᅦ', 'ᅧ', 'ᅨ', 'ᅩ', 'ᅪ',
+            'ᅫ', 'ᅬ', 'ᅭ', 'ᅮ', 'ᅯ', 'ᅰ', 'ᅱ', 'ᅲ', 'ᅳ', 'ᅴ', 'ᅵ'
+        )
+        private val modernConsonantIndexes: Map<Char, Int> =
+            modernChoseong.withIndex().associate { it.value to it.index }
+        private val modernVowelIndexes: Map<Char, Int> =
+            modernJungseong.withIndex().associate { it.value to it.index }
+
         fun isActiveForLayout(layoutName: String?): Boolean = layoutName == KOREAN_DUBEOLSIK_LAYOUT_ID
 
-        private fun consonantIndex(ch: Char): Int = consonantIndexes[ch] ?: -1
+        private fun consonantIndex(ch: Char): Int =
+            consonantIndexes[ch] ?: modernConsonantIndexes[ch] ?: -1
 
-        private fun vowelIndex(ch: Char): Int = vowelIndexes[ch] ?: -1
+        private fun vowelIndex(ch: Char): Int =
+            vowelIndexes[ch] ?: modernVowelIndexes[ch] ?: -1
     }
 }
