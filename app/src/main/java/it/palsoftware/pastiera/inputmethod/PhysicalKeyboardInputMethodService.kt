@@ -323,6 +323,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     /** KeyCodes consumed by Hangul on KEY_DOWN; also consume matching KEY_UP. */
     private val hangulConsumedKeyCodes = mutableSetOf<Int>()
     private val bounceKeyFilter = BounceKeyFilter()
+    private val injectedAltEchoFilter = InjectedAltEchoFilter()
     private val clicksPowerShiftTapFilter = ClicksPowerShiftTapFilter()
     private val accidentalKeyPressFilter = AccidentalKeyPressFilter()
     private val physicalKeyResolver = PhysicalKeyResolver()
@@ -4742,6 +4743,16 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             )
             return true
         }
+        injectedAltEchoFilter.shouldConsumeKeyDown(keyCode, event)?.let { suppressed ->
+            notifyDebugKeyEvent(
+                keyCode = keyCode,
+                event = event,
+                action = "KEY_DOWN_SUPPRESSED",
+                origin = "injected_alt_echo",
+                outputKeyCodeName = suppressed
+            )
+            return true
+        }
 
         // Check if we have an editable field at the very start
         val info = currentInputEditorInfo
@@ -5465,6 +5476,16 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
                 action = "KEY_UP_SUPPRESSED",
                 origin = "bounce_keys",
                 outputKeyCodeName = suppressed.debugOutput()
+            )
+            return true
+        }
+        injectedAltEchoFilter.shouldConsumeKeyUp(keyCode, event)?.let { suppressed ->
+            notifyDebugKeyEvent(
+                keyCode = keyCode,
+                event = event,
+                action = "KEY_UP_SUPPRESSED",
+                origin = "injected_alt_echo",
+                outputKeyCodeName = suppressed
             )
             return true
         }
