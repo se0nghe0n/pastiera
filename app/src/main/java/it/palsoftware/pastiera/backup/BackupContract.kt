@@ -297,6 +297,7 @@ internal object BackupPreferenceContract {
             "auto_capitalize_after_period" to PreferenceValueType.BOOLEAN,
             "long_press_modifier" to PreferenceValueType.STRING,
             "keyboard_layout" to PreferenceValueType.STRING,
+            "hangul_double_press_tense_consonants" to PreferenceValueType.BOOLEAN,
             "keyboard_layout_auto_by_locale" to PreferenceValueType.BOOLEAN,
             "keyboard_layout_list" to PreferenceValueType.STRING,
             "input_style_suggestion_locales" to PreferenceValueType.STRING,

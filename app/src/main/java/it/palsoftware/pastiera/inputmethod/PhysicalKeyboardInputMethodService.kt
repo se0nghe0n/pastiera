@@ -1593,6 +1593,9 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             return false
         }
 
+        hangulComposer.allowDoublePressTenseConsonants =
+            SettingsManager.getHangulDoublePressTenseConsonants(this)
+
         if (keyCode == KeyEvent.KEYCODE_DEL) {
             val result = hangulComposer.process(null)
             if (!result.consumed) return false
