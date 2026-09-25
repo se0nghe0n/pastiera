@@ -2861,6 +2861,39 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         }
     }
 
+
+    /**
+     * Alt KEY_DOWN arms one-shot (or latch when single-tap-latches is on).
+     * When Alt was held as a chord for Device SYM / Alt+key input, drop sticky
+     * state that was only armed for this hold — same idea as Ctrl chord cleanup.
+     * A latch that was already active before the hold is left alone.
+     */
+    private fun clearAltStickyArmedDuringChord(shortcutUsedDuringHold: Boolean) {
+        val before = modifierStateBeforeHold
+        val next = AltChordStickyCleanup.afterChord(
+            shortcutUsedDuringHold = shortcutUsedDuringHold,
+            current = AltChordStickyCleanup.StickyFlags(
+                oneShot = altOneShot,
+                latchActive = altLatchActive,
+                modifierLayerLatched = altModifierLayerLatched
+            ),
+            beforeHoldOneShot = before?.altOneShot,
+            beforeHoldLatch = before?.altLatchActive
+        )
+        val changed =
+            next.oneShot != altOneShot ||
+                next.latchActive != altLatchActive ||
+                next.modifierLayerLatched != altModifierLayerLatched
+        if (!changed) return
+        altOneShot = next.oneShot
+        altLatchActive = next.latchActive
+        if (!next.modifierLayerLatched && altModifierLayerLatched) {
+            lastAltTapUpTime = 0L
+        }
+        altModifierLayerLatched = next.modifierLayerLatched
+        updateStatusBarText()
+    }
+
     private fun handleSoftwareKeyboardModifierKeyUp(keyCode: Int): Boolean {
         return when (keyCode) {
             KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_CTRL_RIGHT -> {
@@ -2884,8 +2917,10 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
                 true
             }
             KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT -> {
+                val shortcutUsedDuringHold = otherKeyInteractedDuringHold
                 val result = modifierStateController.handleAltKeyUp(keyCode)
-                if (result.shouldUpdateStatusBar || result.shouldRefreshStatusBar) {
+                clearAltStickyArmedDuringChord(shortcutUsedDuringHold)
+                if (result.shouldUpdateStatusBar || result.shouldRefreshStatusBar || shortcutUsedDuringHold) {
                     updateStatusBarText()
                 }
                 modifierDownTimes.remove(keyCode)
@@ -5588,6 +5623,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
                 val holdDuration = if (downTime > 0) event?.eventTime?.minus(downTime) ?: 0L else 0L
                 val isLongHold = holdDuration > 300L
                 val stickyEnabled = SettingsManager.isStaticVariationBarLayerStickyEnabled(this)
+                val shortcutUsedDuringHold = otherKeyInteractedDuringHold
                 val isIntentionalHold = variationInteractedDuringHold || (isLongHold && !otherKeyInteractedDuringHold)
 
                 if (isIntentionalHold) {
@@ -5619,6 +5655,10 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
                     } else {
                         lastAltTapUpTime = 0L
                     }
+                    // Alt KEY_DOWN arms one-shot/latch; if this hold was a Device SYM chord,
+                    // drop sticky state armed only for this press (Ctrl already does this).
+                    // Skip after intentional-hold restore — that path already restored pre-hold state.
+                    clearAltStickyArmedDuringChord(shortcutUsedDuringHold)
                 }
                 variationInteractedDuringHold = false
                 otherKeyInteractedDuringHold = false
