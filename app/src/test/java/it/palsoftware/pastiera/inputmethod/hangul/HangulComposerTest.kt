@@ -54,6 +54,7 @@ class HangulComposerTest {
     @Test
     fun `ㅂ plus ㅂ combines to ㅃ and shift ㅃ is atomic`() {
         val combined = HangulComposer()
+        combined.allowDoublePressTenseConsonants = true
         combined.process('ㅂ')
         val doubled = combined.process('ㅂ')
         assertEquals("", doubled.commit)
@@ -61,6 +62,7 @@ class HangulComposerTest {
         assertEquals("ㅂ", combined.process(null).composing)
 
         val syllable = HangulComposer()
+        syllable.allowDoublePressTenseConsonants = true
         syllable.process('ㅂ')
         syllable.process('ㅂ')
         assertEquals("빠", syllable.process('ㅏ').composing)
@@ -131,11 +133,11 @@ class HangulComposerTest {
         assertEquals("닭", type("ㄷㅏㄹㄱ"))
         assertEquals("값", type("ㄱㅏㅂㅅ"))
         assertEquals("없", type("ㅇㅓㅂㅅ"))
-        assertEquals("갔", type("ㄱㅏㅅㅅ"))
-        assertEquals("까", type("ㄱㄱㅏ"))
-        assertEquals("따", type("ㄷㄷㅏ"))
-        assertEquals("싸", type("ㅅㅅㅏ"))
-        assertEquals("짜", type("ㅈㅈㅏ"))
+        assertEquals("갔", type("ㄱㅏㅅㅅ", allowDoublePressTenseConsonants = true))
+        assertEquals("까", type("ㄱㄱㅏ", allowDoublePressTenseConsonants = true))
+        assertEquals("따", type("ㄷㄷㅏ", allowDoublePressTenseConsonants = true))
+        assertEquals("싸", type("ㅅㅅㅏ", allowDoublePressTenseConsonants = true))
+        assertEquals("짜", type("ㅈㅈㅏ", allowDoublePressTenseConsonants = true))
     }
 
     @Test
@@ -145,8 +147,8 @@ class HangulComposerTest {
         assertEquals("달가", type("ㄷㅏㄹㄱㅏ"))
         assertEquals("갑사", type("ㄱㅏㅂㅅㅏ"))
         assertEquals("업서", type("ㅇㅓㅂㅅㅓ"))
-        assertEquals("가싸", type("ㄱㅏㅅㅅㅏ"))
-        assertEquals("가까", type("ㄱㅏㄱㄱㅏ"))
+        assertEquals("가싸", type("ㄱㅏㅅㅅㅏ", allowDoublePressTenseConsonants = true))
+        assertEquals("가까", type("ㄱㅏㄱㄱㅏ", allowDoublePressTenseConsonants = true))
     }
 
     @Test
@@ -191,10 +193,10 @@ class HangulComposerTest {
 
     @Test
     fun `simple batchim doubles with plain and shift jamo`() {
-        assertEquals("갔", type("ㄱㅏㅅㅅ"))
-        assertEquals("갂", type("ㄱㅏㄱㄱ")) // 가 + ㄱ + ㄱ
+        assertEquals("갔", type("ㄱㅏㅅㅅ", allowDoublePressTenseConsonants = true))
+        assertEquals("갂", type("ㄱㅏㄱㄱ", allowDoublePressTenseConsonants = true)) // 가 + ㄱ + ㄱ
         assertEquals("깍", type("ㄲㅏㄱ")) // ㄲ + ㅏ + ㄱ
-        assertEquals("깎", type("ㄲㅏㄱㄱ")) // ㄲ + ㅏ + ㄱ + ㄱ → ㄲㅏㄲ
+        assertEquals("깎", type("ㄲㅏㄱㄱ", allowDoublePressTenseConsonants = true)) // ㄲ + ㅏ + ㄱ + ㄱ → ㄲㅏㄲ
         assertEquals("깎", type("ㄲㅏㄲ")) // 까 + Shiftㄱ (ㄲ as atomic batchim)
         assertEquals("샀", type("ㅅㅏㅆ")) // 사 + Shiftㅌ→ㅆ
         val shiftDouble = HangulComposer()
@@ -310,8 +312,81 @@ class HangulComposerTest {
         assertFalse(HangulComposer.isActiveForLayout(null))
     }
 
-    private fun type(sequence: String): String {
+    @Test
+    fun `double press does not create tense consonants when disabled`() {
         val composer = HangulComposer()
+        assertFalse(composer.allowDoublePressTenseConsonants)
+
+        assertEquals("ㄱ", composer.process('ㄱ').composing)
+        val secondGiyeok = composer.process('ㄱ')
+        assertEquals("ㄱ", secondGiyeok.commit)
+        assertEquals("ㄱ", secondGiyeok.composing)
+        val vowel = composer.process('ㅏ')
+        assertEquals("", vowel.commit)
+        assertEquals("가", vowel.composing)
+        assertEquals("ㄱ가", type("ㄱㄱㅏ"))
+        assertEquals("ㄷ다", type("ㄷㄷㅏ"))
+        assertEquals("ㅂ바", type("ㅂㅂㅏ"))
+        assertEquals("ㅅ사", type("ㅅㅅㅏ"))
+        assertEquals("ㅈ자", type("ㅈㅈㅏ"))
+    }
+
+    @Test
+    fun `shift tense consonants and compound batchim still combine when double press is disabled`() {
+        assertEquals("까", type("ㄲㅏ"))
+        assertEquals("따", type("ㄸㅏ"))
+        assertEquals("빠", type("ㅃㅏ"))
+        assertEquals("싸", type("ㅆㅏ"))
+        assertEquals("짜", type("ㅉㅏ"))
+        assertEquals("갔", type("ㄱㅏㅆ"))
+        assertEquals("갂", type("ㄱㅏㄲ"))
+        assertEquals("깎", type("ㄲㅏㄲ"))
+        assertEquals("샀", type("ㅅㅏㅆ"))
+        assertEquals("값", type("ㄱㅏㅂㅅ"))
+        assertEquals("갃", type("ㄱㅏㄱㅅ"))
+        assertEquals("앉", type("ㅇㅏㄴㅈ"))
+        assertEquals("닭", type("ㄷㅏㄹㄱ"))
+
+        val shiftOnGiyeokBatchim = HangulComposer()
+        shiftOnGiyeokBatchim.process('ㄱ')
+        shiftOnGiyeokBatchim.process('ㅏ')
+        shiftOnGiyeokBatchim.process('ㄱ')
+        val giyeokShift = shiftOnGiyeokBatchim.process('ㄲ')
+        assertEquals("", giyeokShift.commit)
+        assertEquals("갂", giyeokShift.composing)
+        assertTrue(giyeokShift.consumed)
+
+        val shiftOnSiotBatchim = HangulComposer()
+        shiftOnSiotBatchim.process('ㅅ')
+        shiftOnSiotBatchim.process('ㅏ')
+        shiftOnSiotBatchim.process('ㅅ')
+        assertEquals("샀", shiftOnSiotBatchim.process('ㅆ').composing)
+    }
+
+    @Test
+    fun `가 plus plain ㄱ ㄱ commits instead of doubling the batchim`() {
+        assertEquals("각ㄱ", type("ㄱㅏㄱㄱ"))
+        assertEquals("갓ㅅ", type("ㄱㅏㅅㅅ"))
+        assertEquals("각가", type("ㄱㅏㄱㄱㅏ"))
+        assertEquals("갓사", type("ㄱㅏㅅㅅㅏ"))
+        assertEquals("깍ㄱ", type("ㄲㅏㄱㄱ"))
+
+        val composer = HangulComposer()
+        composer.process('ㄱ')
+        composer.process('ㅏ')
+        assertEquals("각", composer.process('ㄱ').composing)
+        val second = composer.process('ㄱ')
+        assertEquals("각", second.commit)
+        assertEquals("ㄱ", second.composing)
+        assertTrue(second.consumed)
+    }
+
+    private fun type(
+        sequence: String,
+        allowDoublePressTenseConsonants: Boolean = false
+    ): String {
+        val composer = HangulComposer()
+        composer.allowDoublePressTenseConsonants = allowDoublePressTenseConsonants
         val committed = StringBuilder()
         var composing = ""
         for (ch in sequence) {

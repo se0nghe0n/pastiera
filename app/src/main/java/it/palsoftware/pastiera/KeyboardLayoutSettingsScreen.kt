@@ -34,6 +34,7 @@ import it.palsoftware.pastiera.data.layout.LayoutFileStore.LayoutImportError
 import it.palsoftware.pastiera.data.layout.LayoutFileStore.LayoutImportResult
 import it.palsoftware.pastiera.data.layout.LayoutMappingRepository
 import it.palsoftware.pastiera.layout.OnlineLayoutsActivity
+import it.palsoftware.pastiera.inputmethod.hangul.HangulComposer
 import it.palsoftware.pastiera.inputmethod.subtype.AdditionalSubtypeUtils
 import it.palsoftware.pastiera.R
 import kotlinx.coroutines.launch
@@ -308,6 +309,21 @@ fun KeyboardLayoutSettingsScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
+                if (showsHangulDoublePressSetting(locale, selectedLayout)) {
+                    var doublePressTenseConsonants by remember {
+                        mutableStateOf(SettingsManager.getHangulDoublePressTenseConsonants(context))
+                    }
+                    HangulDoublePressSwitchRow(
+                        title = stringResource(R.string.hangul_double_press_tense_consonants_title),
+                        description = stringResource(R.string.hangul_double_press_tense_consonants_description),
+                        checked = doublePressTenseConsonants,
+                        onCheckedChange = { enabled ->
+                            doublePressTenseConsonants = enabled
+                            SettingsManager.setHangulDoublePressTenseConsonants(context, enabled)
+                        }
+                    )
+                }
+
                 // No Conversion (QWERTY - default, passes keycodes as-is)
                 Surface(
                     modifier = Modifier
@@ -524,6 +540,50 @@ fun KeyboardLayoutSettingsScreen(
                 }
             }
         )
+    }
+}
+
+private fun showsHangulDoublePressSetting(locale: String, selectedLayout: String): Boolean {
+    val language = locale.substringBefore('_').substringBefore('-')
+    return language.equals("ko", ignoreCase = true) ||
+        selectedLayout == HangulComposer.KOREAN_DUBEOLSIK_LAYOUT_ID
+}
+
+@Composable
+private fun HangulDoublePressSwitchRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Surface(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Keyboard,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
+        }
     }
 }
 

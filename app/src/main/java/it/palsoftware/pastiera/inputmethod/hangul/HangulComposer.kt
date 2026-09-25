@@ -10,8 +10,15 @@ package it.palsoftware.pastiera.inputmethod.hangul
  * A batchim followed by a vowel uses 연음: a complex batchim keeps its first
  * consonant and the second becomes the next syllable's choseong; a simple
  * batchim moves entirely.
+ *
+ * Plain double-press tense consonants (ㄱ+ㄱ, ㅅ+ㅅ, and the other choseong
+ * doubles) stay off unless [allowDoublePressTenseConsonants] is set. Shift
+ * still supplies ㄲ/ㄸ/ㅃ/ㅆ/ㅉ, and compound batchim such as ㄳ still combines.
  */
 internal class HangulComposer {
+    /** When true, ㄱ+ㄱ→ㄲ and ㅅ+ㅅ→ㅆ. Default off; Shift tense jamo is unaffected. */
+    var allowDoublePressTenseConsonants: Boolean = false
+
     data class Result(
         /** Replaces the current composing region and is committed. Empty means no commit. */
         val commit: String = "",
@@ -49,6 +56,9 @@ internal class HangulComposer {
     }
 
     fun hasComposition(): Boolean = cho >= 0 || jung >= 0
+
+    /** Syllable or compatibility jamo currently shown in the composing span. */
+    fun composingText(): String = currentText()
 
     private fun passThrough(): Result {
         if (!hasComposition()) return Result(consumed = false)
@@ -96,11 +106,13 @@ internal class HangulComposer {
             return composingOnly()
         }
         if (jung < 0 && cho >= 0) {
-            val combined = if (cho == incoming) CHO_DOUBLES[cho] ?: -1 else -1
-            if (combined >= 0) {
-                cho = combined
-                choCombined = true
-                return composingOnly()
+            if (allowDoublePressTenseConsonants && cho == incoming) {
+                val combined = CHO_DOUBLES[cho] ?: -1
+                if (combined >= 0) {
+                    cho = combined
+                    choCombined = true
+                    return composingOnly()
+                }
             }
             return commitAndStartConsonant(incoming)
         }
@@ -116,7 +128,15 @@ internal class HangulComposer {
             }
             return commitAndStartConsonant(incoming)
         }
-        val combinedJong = JONG_COMBINE[jong to incoming] ?: -1
+        val combineKey = jong to incoming
+        // Skip only plain+plain doubles (ㄱ+ㄱ, ㅅ+ㅅ). Shift pairs and compound batchim stay.
+        val combinedJong = if (
+            !allowDoublePressTenseConsonants && combineKey in JONG_PLAIN_DOUBLE_PRESSES
+        ) {
+            -1
+        } else {
+            JONG_COMBINE[combineKey] ?: -1
+        }
         if (combinedJong >= 0) {
             jong = combinedJong
             jongCombined = true
@@ -254,6 +274,11 @@ internal class HangulComposer {
             9 to 8, 10 to 8, 11 to 8,
             14 to 13, 15 to 13, 16 to 13,
             19 to 18
+        )
+        /** Plain double-press batchim that becomes ㄲ/ㅆ. Shift pairs are not in this set. */
+        private val JONG_PLAIN_DOUBLE_PRESSES = setOf(
+            1 to 0,  // ㄱ + ㄱ = ㄲ
+            19 to 9  // ㅅ + ㅅ = ㅆ
         )
         private val JONG_COMBINE = mapOf(
             (1 to 0) to 2,   // ㄱ + ㄱ = ㄲ

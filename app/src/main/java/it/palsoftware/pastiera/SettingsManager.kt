@@ -96,6 +96,7 @@ object SettingsManager {
     private const val KEY_AUTO_CAPITALIZE_AFTER_PERIOD = "auto_capitalize_after_period"
     private const val KEY_LONG_PRESS_MODIFIER = "long_press_modifier" // "alt", "shift", "variations", or "sym"
     private const val KEY_KEYBOARD_LAYOUT = "keyboard_layout" // "qwerty", "azerty", etc.
+    private const val KEY_HANGUL_DOUBLE_PRESS_TENSE_CONSONANTS = "hangul_double_press_tense_consonants"
     private const val KEY_KEYBOARD_LAYOUT_AUTO_BY_LOCALE = "keyboard_layout_auto_by_locale" // If true, resolve layout from subtype/locale mapping
     const val KEY_KEYBOARD_LAYOUT_AUTO_MAPPING_UPDATED = "keyboard_layout_auto_mapping_updated"
     private const val KEY_KEYBOARD_LAYOUT_LIST = "keyboard_layout_list" // JSON array of layout ids for cycling
@@ -352,6 +353,7 @@ object SettingsManager {
     private const val DEFAULT_AUTO_CAPITALIZE_AFTER_PERIOD = true
     private const val DEFAULT_LONG_PRESS_MODIFIER = "alt"
     private const val DEFAULT_KEYBOARD_LAYOUT = "qwerty"
+    private const val DEFAULT_HANGUL_DOUBLE_PRESS_TENSE_CONSONANTS = false
     private const val DEFAULT_KEYBOARD_LAYOUT_AUTO_BY_LOCALE = true
     private const val DEFAULT_ALT_SHIFT_LAYOUT_SWITCH = false
     private const val DEFAULT_ALT_ENTER_LAYOUT_SWITCH = false
@@ -4452,6 +4454,23 @@ object SettingsManager {
     fun setKeyboardLayoutAutoByLocale(context: Context, enabled: Boolean) {
         getPreferences(context).edit()
             .putBoolean(KEY_KEYBOARD_LAYOUT_AUTO_BY_LOCALE, enabled)
+            .apply()
+    }
+
+    /**
+     * When true, a second plain consonant press composes ㄲ/ㄸ/ㅃ/ㅆ/ㅉ.
+     * Default is false: those jamo come from Shift only.
+     */
+    fun getHangulDoublePressTenseConsonants(context: Context): Boolean {
+        return getPreferences(context).getBoolean(
+            KEY_HANGUL_DOUBLE_PRESS_TENSE_CONSONANTS,
+            DEFAULT_HANGUL_DOUBLE_PRESS_TENSE_CONSONANTS
+        )
+    }
+
+    fun setHangulDoublePressTenseConsonants(context: Context, enabled: Boolean) {
+        getPreferences(context).edit()
+            .putBoolean(KEY_HANGUL_DOUBLE_PRESS_TENSE_CONSONANTS, enabled)
             .apply()
     }
 

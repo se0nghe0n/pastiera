@@ -68,6 +68,21 @@ class SettingsManagerLayoutSwitchTest {
     }
 
     @Test
+    fun hangulDoublePressTenseConsonants_defaultsOff_andPersistsEnabledState() {
+        val context = RuntimeEnvironment.getApplication()
+
+        assertFalse(SettingsManager.getHangulDoublePressTenseConsonants(context))
+
+        SettingsManager.setHangulDoublePressTenseConsonants(context, true)
+
+        assertTrue(SettingsManager.getHangulDoublePressTenseConsonants(context))
+
+        SettingsManager.setHangulDoublePressTenseConsonants(context, false)
+
+        assertFalse(SettingsManager.getHangulDoublePressTenseConsonants(context))
+    }
+
+    @Test
     fun ctrlSpaceLayoutSwitch_defaultsEnabled_andPersistsDisabledState() {
         val context = RuntimeEnvironment.getApplication()
 
