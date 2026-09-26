@@ -86,3 +86,12 @@ and their manifests. Conversion and serialization scripts live under `scripts/`.
 Provenance note: the maintained dictionary pipeline and current maintainer-provided sources point
 mainly to Leipzig/Wortschatz frequency data. Some older bundled entries predate the current
 documentation trail, so their exact upstream corpus IDs are not fully reconstructed here.
+
+### Korean (`ko_base.json` / `ko_base.dict`)
+
+- Corpus: Leipzig Corpora Collection, Korean Wikipedia 2021, 1M sentences (`kor_wikipedia_2021_1M-words.txt`)
+- Download: https://downloads.wortschatz-leipzig.de/corpora/kor_wikipedia_2021_1M.tar.gz
+- License: downloadable Leipzig corpora are provided under Creative Commons Attribution (CC BY). Cite Goldhahn, Eckart & Quasthoff, “Building Large Monolingual Dictionaries at the Leipzig Corpora Collection: From 100 to 200 Languages”, LREC 2012.
+- Builder: `scripts/build_korean_dictionary.py` keeps the 50,000 most frequent tokens that contain only Hangul syllables and rank-scales them into the shared 66–222 frequency band.
+
+Pastiera ships the derived word/frequency list, not the corpus sentences.

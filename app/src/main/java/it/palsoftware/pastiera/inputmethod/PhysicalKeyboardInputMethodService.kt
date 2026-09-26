@@ -63,6 +63,8 @@ import it.palsoftware.pastiera.inputmethod.subtype.AdditionalSubtypeUtils.locale
 import it.palsoftware.pastiera.inputmethod.subtype.AdditionalSubtypeUtils.setAdditionalInputMethodSubtypesCompat
 import it.palsoftware.pastiera.inputmethod.hangul.HangulComposer
 import it.palsoftware.pastiera.inputmethod.hangul.HangulSelectionPolicy
+import it.palsoftware.pastiera.inputmethod.hangul.HangulSuggestionWord
+import it.palsoftware.pastiera.inputmethod.suggestions.SuggestionButtonHandler
 import it.palsoftware.pastiera.inputmethod.telex.VietnameseTelexProcessor
 import it.palsoftware.pastiera.inputmethod.trackpad.TrackpadEventDeviceResolver
 import it.palsoftware.pastiera.inputmethod.trackpad.TrackpadGestureDetector
@@ -321,6 +323,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     /** KeyCodes consumed by Hangul on KEY_DOWN; also consume matching KEY_UP. */
     private val hangulConsumedKeyCodes = mutableSetOf<Int>()
     private val bounceKeyFilter = BounceKeyFilter()
+    private val injectedAltEchoFilter = InjectedAltEchoFilter()
     private val clicksPowerShiftTapFilter = ClicksPowerShiftTapFilter()
     private val accidentalKeyPressFilter = AccidentalKeyPressFilter()
     private val physicalKeyResolver = PhysicalKeyResolver()
@@ -1590,6 +1593,9 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             return false
         }
 
+        hangulComposer.allowDoublePressTenseConsonants =
+            SettingsManager.getHangulDoublePressTenseConsonants(this)
+
         if (keyCode == KeyEvent.KEYCODE_DEL) {
             val result = hangulComposer.process(null)
             if (!result.consumed) return false
@@ -1726,6 +1732,30 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         } finally {
             ic.endBatchEdit()
         }
+        publishHangulSuggestions(ic, result.commit)
+    }
+
+    private fun clearHangulComposerState() {
+        hangulComposer.reset()
+        hangulConsumedKeyCodes.clear()
+    }
+
+    /**
+     * Feed the current eojeol, including one copy of the composing syllable,
+     * into the existing suggestion tracker.
+     */
+    private fun publishHangulSuggestions(ic: InputConnection, justCommitted: String) {
+        if (!::suggestionController.isInitialized) return
+        if (inputContextState.shouldDisableSuggestions) return
+        val before = try {
+            ic.getTextBeforeCursor(64, 0)?.toString().orEmpty()
+        } catch (_: Exception) {
+            return
+        }
+        val composing = if (hangulComposer.hasComposition()) hangulComposer.composingText() else ""
+        suggestionController.setComposingWord(
+            HangulSuggestionWord.compose(before, composing, justCommitted)
+        )
     }
 
     private fun finishHangulComposition() {
@@ -1940,6 +1970,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             activeSuggestionLocalesProvider = { getAdditionalSuggestionLocalesForActiveInputStyle() }
         )
         inputEventRouter.suggestionController = suggestionController
+        SuggestionButtonHandler.onBeforeReplace = { clearHangulComposerState() }
         
         // Preload dictionary in background so it's ready when user focuses a field
         suggestionController.preloadDictionary()
@@ -2834,6 +2865,39 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
         }
     }
 
+
+    /**
+     * Alt KEY_DOWN arms one-shot (or latch when single-tap-latches is on).
+     * When Alt was held as a chord for Device SYM / Alt+key input, drop sticky
+     * state that was only armed for this hold — same idea as Ctrl chord cleanup.
+     * A latch that was already active before the hold is left alone.
+     */
+    private fun clearAltStickyArmedDuringChord(shortcutUsedDuringHold: Boolean) {
+        val before = modifierStateBeforeHold
+        val next = AltChordStickyCleanup.afterChord(
+            shortcutUsedDuringHold = shortcutUsedDuringHold,
+            current = AltChordStickyCleanup.StickyFlags(
+                oneShot = altOneShot,
+                latchActive = altLatchActive,
+                modifierLayerLatched = altModifierLayerLatched
+            ),
+            beforeHoldOneShot = before?.altOneShot,
+            beforeHoldLatch = before?.altLatchActive
+        )
+        val changed =
+            next.oneShot != altOneShot ||
+                next.latchActive != altLatchActive ||
+                next.modifierLayerLatched != altModifierLayerLatched
+        if (!changed) return
+        altOneShot = next.oneShot
+        altLatchActive = next.latchActive
+        if (!next.modifierLayerLatched && altModifierLayerLatched) {
+            lastAltTapUpTime = 0L
+        }
+        altModifierLayerLatched = next.modifierLayerLatched
+        updateStatusBarText()
+    }
+
     private fun handleSoftwareKeyboardModifierKeyUp(keyCode: Int): Boolean {
         return when (keyCode) {
             KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_CTRL_RIGHT -> {
@@ -2857,8 +2921,10 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
                 true
             }
             KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT -> {
+                val shortcutUsedDuringHold = otherKeyInteractedDuringHold
                 val result = modifierStateController.handleAltKeyUp(keyCode)
-                if (result.shouldUpdateStatusBar || result.shouldRefreshStatusBar) {
+                clearAltStickyArmedDuringChord(shortcutUsedDuringHold)
+                if (result.shouldUpdateStatusBar || result.shouldRefreshStatusBar || shortcutUsedDuringHold) {
                     updateStatusBarText()
                 }
                 modifierDownTimes.remove(keyCode)
@@ -2992,6 +3058,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
     }
     
     override fun onDestroy() {
+        SuggestionButtonHandler.onBeforeReplace = null
         ClicksAccessibilityKeyBridge.unregister(this)
         clicksPowerShiftTapFilter.reset()
         accidentalKeyPressFilter.reset()
@@ -4402,8 +4469,10 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             if (!forwardByOne) {
                 DeferredPunctuationSpaceTracker.clear()
             }
-            // Update suggestions on cursor movement (if suggestions enabled)
-            if (!state.shouldDisableSuggestions) {
+            // Update suggestions on cursor movement (if suggestions enabled).
+            // While a Hangul syllable is composing, the editor text omits that
+            // span; publishHangulSuggestions already set the logical word.
+            if (!state.shouldDisableSuggestions && !hangulComposer.hasComposition()) {
                 suggestionController.onCursorMoved(currentInputConnection)
             }
             // Drop add-word candidate if cursor leaves its word
@@ -4674,6 +4743,16 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
                 action = "KEY_DOWN_SUPPRESSED",
                 origin = "bounce_keys",
                 outputKeyCodeName = suppressed.debugOutput()
+            )
+            return true
+        }
+        injectedAltEchoFilter.shouldConsumeKeyDown(keyCode, event)?.let { suppressed ->
+            notifyDebugKeyEvent(
+                keyCode = keyCode,
+                event = event,
+                action = "KEY_DOWN_SUPPRESSED",
+                origin = "injected_alt_echo",
+                outputKeyCodeName = suppressed
             )
             return true
         }
@@ -5403,6 +5482,16 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             )
             return true
         }
+        injectedAltEchoFilter.shouldConsumeKeyUp(keyCode, event)?.let { suppressed ->
+            notifyDebugKeyEvent(
+                keyCode = keyCode,
+                event = event,
+                action = "KEY_UP_SUPPRESSED",
+                origin = "injected_alt_echo",
+                outputKeyCodeName = suppressed
+            )
+            return true
+        }
 
         // Check if we have an editable field at the start (same logic as onKeyDown)
         val info = currentInputEditorInfo
@@ -5558,6 +5647,7 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
                 val holdDuration = if (downTime > 0) event?.eventTime?.minus(downTime) ?: 0L else 0L
                 val isLongHold = holdDuration > 300L
                 val stickyEnabled = SettingsManager.isStaticVariationBarLayerStickyEnabled(this)
+                val shortcutUsedDuringHold = otherKeyInteractedDuringHold
                 val isIntentionalHold = variationInteractedDuringHold || (isLongHold && !otherKeyInteractedDuringHold)
 
                 if (isIntentionalHold) {
@@ -5589,6 +5679,10 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
                     } else {
                         lastAltTapUpTime = 0L
                     }
+                    // Alt KEY_DOWN arms one-shot/latch; if this hold was a Device SYM chord,
+                    // drop sticky state armed only for this press (Ctrl already does this).
+                    // Skip after intentional-hold restore — that path already restored pre-hold state.
+                    clearAltStickyArmedDuringChord(shortcutUsedDuringHold)
                 }
                 variationInteractedDuringHold = false
                 otherKeyInteractedDuringHold = false
@@ -6111,6 +6205,11 @@ class PhysicalKeyboardInputMethodService : InputMethodService(), ClicksAccessibi
             ) && SettingsManager.getAutoCapitalizeFirstLetter(this)
 
             Log.d(TAG, "Accepting suggestion '$suggestion' from third=$third (index=$suggestionIndex)")
+
+            // Drop Hangul state before the composing span is committed, then
+            // include that syllable in the word the suggestion replaces.
+            clearHangulComposerState()
+            ic.finishComposingText()
 
             // Use the same logic as SuggestionButtonHandler
             val before = ic.getTextBeforeCursor(64, 0)?.toString().orEmpty()

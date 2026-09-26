@@ -387,6 +387,8 @@
     <string name="keyboard_layout_mode_title">Automatic Layout Mapping</string>
     <string name="keyboard_layout_mode_auto_description">ON: follow subtype/locale mapping defaults.</string>
     <string name="keyboard_layout_mode_manual_description">OFF: use one manually selected layout for all locales.</string>
+    <string name="hangul_double_press_tense_consonants_title">Double-press tense consonants (쌍자음)</string>
+    <string name="hangul_double_press_tense_consonants_description">When off, ㄱㄱ stays two plain consonants; use Shift for ㄲ/ㄸ/ㅃ/ㅆ/ㅉ. Default off.</string>
     <string name="alt_shift_layout_switch_title">Alt+Shift Layout Switch</string>
     <string name="alt_shift_layout_switch_description">Cycle languages/layouts with Alt+Shift.</string>
     <string name="alt_enter_layout_switch_title">Alt+Enter Layout Switch</string>
